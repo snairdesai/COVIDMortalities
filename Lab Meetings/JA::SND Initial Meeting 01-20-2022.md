@@ -23,25 +23,23 @@
   
       - In the *excess mortality data*, the relationship essentially flips → so countries with lower GDP per capita, resources, etc. are performing substantially worse.
 
-- They tried to explain this with several possibilities: 1) the arrival of vaccinations may have improved the performance of wealthier countries (which have improved their relative rankings over time); 2) countries that are characterized by weaker rules and accountability are performing better in actual mortality because of weaker data infrastructure, etc.
+- They tried to explain this with several possibilities, but **two explanations rose to the top**: 
+    - **1)** The arrival of vaccinations may have improved the performance of wealthier countries (which have improved their relative rankings over time). 
+    - **2)** Countries that are characterized by weaker rules and accountability are performing better in actual mortality because of weaker data infrastructure, etc.
   
-- The regression results are consistent with both interpretations → the problem is Weining and Yothin are both overcommitted and cannot run additional regressions → would love for you to join and push towards a working paper
+- The regression results are consistent with *both interpretations* → Yothin and Weining are running regressions for **1)** and **2)** respectively, and *both have found significant effects*. There is also evidence of multicollinearity in both models. 
+
+    - Currently, Weining and Yothin are both overcommitted and cannot run additional regressions → **this will be your role**. So, you will be running additional models, working to correct multicollinearity, running robustness checks, etc.
+
+    - *Note*: The underlying econometrics here are pretty simple → they are not running any complex panel study, it’s an aggregation and interpolation of a cross-sectional analysis. You should be able to handle this with your current knowledge.
+    
+    - Another core issue (which will arise during drafting) will be framing this in a way which is politically palatable giving Rashad’s and Weining’s role (at IMF and Treasury).
+  
+- **LOGISTICS:** An horarium is possible, but this could be unlikely because you are not longer unaffiliated with USC (if it does come through, it will roughly translate to a $3K disbursement). To make this work, you may be hired by Aizenman as an independent contractor.
   
 
-- Seems like you would be working to correct multicollinearity, run the robustness checks, etc.
-  
-- The underlying econometrics here is pretty simple → they are not running any complex panel study, it’s an aggregation and interpolation of a cross-sectional analysis
-  
+**NEXT STEPS: Aizenman will email the fragments of what we have now → we can move from there with code and analysis (he expects this to end up in Economic Modeling or the like)**
 
-- Horarium is possible, but this is unlikely because you are not longer unaffiliated with USC (roughly will be $3K disbursement)
-  
-- You may be hired as a contractor through Aizenman
-  
-- The main issue will be framing this in a way which is politically palatable giving Rashad’s and Weining’s role (at IMF and Treasury)
-  
-
-NEXT STEPS: Aizenman will email the fragments of what we have now → we can move from there with code and analysis (he expects this to end up in Economic Modeling or the like)
-
-MEETINGS ARE WEEKLY EVERY SUNDAY AT 11AM EAST COAST TIME.
+                                           ***MEETINGS ARE WEEKLY EVERY SUNDAY AT 11AM EAST COAST TIME.***
 
 **
