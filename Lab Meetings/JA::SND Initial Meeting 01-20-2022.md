@@ -34,11 +34,13 @@
     - *Note*: The underlying econometrics here are pretty simple → they are not running any complex panel study, it’s an aggregation and interpolation of a cross-sectional analysis. You should be able to handle this with your current knowledge.
     
     - Another core issue (which will arise during drafting) will be framing this in a way which is politically palatable giving Rashad’s and Weining’s role (at IMF and Treasury).
+
+    - In terms of publication, Aizenman expects this to end up in Economic Modeling or the like (perhaps a European Journal). We will first aim for an NBER WP.
   
 - **LOGISTICS:** An horarium is possible, but this could be unlikely because you are not longer unaffiliated with USC (if it does come through, it will roughly translate to a $3K disbursement). To make this work, you may be hired by Aizenman as an independent contractor.
   
 
-**NEXT STEPS: Aizenman will email the fragments of what we have now → we can move from there with code and analysis (he expects this to end up in Economic Modeling or the like)**
+**NEXT STEPS: Aizenman will email the fragments of what we have now → we can move from there with code and analysis.**
 
                                            ***MEETINGS ARE WEEKLY EVERY SUNDAY AT 11AM EAST COAST TIME.***
 
