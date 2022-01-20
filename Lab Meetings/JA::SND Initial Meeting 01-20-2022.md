@@ -3,7 +3,7 @@
 
 - Started working on this in the context on two projects → work began roughly 6 week ago → however, most of the team is overcommitted with other duties (Weining is at the IMF; Yothin is at the ADB; Rashad is at Treasury; Aizenman is at USC).
   
-- Team: Yothin Jinjarak, Weining Xin, Rashad Ahmed (but currently overcommitted), also an Israeli professor who joined the team, and they finished one paper together.
+- Team: Yothin Jinjarak, Weining Xin, Rashad Ahmed (but currently overcommitted), also an Israeli professor who joined the team. This team already finished one paper together previously.
   
     - The Israeli professor graduated from MIT and is affiliated with the CEPR.
 
