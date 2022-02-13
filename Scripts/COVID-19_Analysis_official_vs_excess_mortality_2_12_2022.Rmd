@@ -1,0 +1,217 @@
+
+# Import library
+```{r}
+knitr::opts_chunk$set(eval = FALSE)
+rm(list = ls())
+library(lubridate)
+library(zoo)
+library(quantmod)
+library(fBasics)
+library(tseries)
+library(sandwich)
+library(lmtest)
+library(lattice)
+library(xtable)
+library(vars)
+library(dplyr)
+library(gridExtra)
+library(corrplot)
+library(ggplot2)
+library(reshape2)
+library(readxl)
+library(data.table)
+library(rvest)
+library(plm)
+library(stringr)
+library(ggpubr)
+library(tidyverse)
+library(foreign)
+library(stargazer)
+library(glmnet)
+library(caret)
+library(VIM) 
+library(tableHTML)
+```
+
+### Read Final_Data_Country
+```{r}
+dat_country.master.master <- read_excel("./Data/Final_Data_Country.xlsx", sheet = "Data")
+
+### Remove countries with population less than 1 million
+### dat_country.master.master <- dat_country.master.master[which(dat_country.master.master$population > 1000000),]
+
+dat_country.master.master$Date <- as.Date(dat_country.master.master$Date, origin = "1960-01-01")
+
+Countries <- unique(dat_country.master.master$Country)
+
+# Countries
+
+```
+
+
+### Prepare dataset for panel estimation
+```{r}
+dat_country <- dat_country.master.master
+dat_country$Date <- as.Date(dat_country$Date,"%Y-%m-%d")
+dat_country$gdp_per_capita <- dat_country$gdp_per_capita/1000
+#reorder
+dat_country <- dat_country[order(dat_country$Date),]
+dat_country <- dat_country[order(dat_country$Country),]
+
+# dat_country <- dat_country[which(dat_country$Country != "Turkmenistan"),]
+
+
+dat_country.master <- dat_country %>%
+   group_by(Country) %>%
+   mutate(Official_New_Mortality = total_deaths_per_million - Lag(total_deaths_per_million,1),
+          total_recovery_per_million = total_cases_per_million - total_deaths_per_million,
+          Deviation_percent_excess_official = log(cumulative_excess_mortality_per_million) - log(total_deaths_per_million),
+          ratio_excess_official = cumulative_excess_mortality_per_million/total_deaths_per_million,
+          diff_excess_official = cumulative_excess_mortality_per_million - total_deaths_per_million) 
+
+```
+
+### Impute people vaccinated per hundred and standardize all variables 
+```{r}
+
+# Impute total_vaccinations_per_hundred using last observation carried forward
+dat_country.master <- dat_country.master[order(dat_country.master$Date),]
+dat_country.master <- dat_country.master[order(dat_country.master$Country),]
+dat_country.master <- dat_country.master %>%
+   dplyr::group_by(Country) %>%
+   mutate(total_vaccinations_per_hundred  = ifelse(Date == min(Date) & is.na(total_vaccinations_per_hundred),0,total_vaccinations_per_hundred)) %>%
+   mutate(total_vaccinations_per_hundred_imputed = zoo::na.locf(total_vaccinations_per_hundred))
+
+# Impute total_vaccinations_per_hundred using last observation carried forward
+dat_country.master <- dat_country.master[order(dat_country.master$Date),]
+dat_country.master <- dat_country.master[order(dat_country.master$Country),]
+dat_country.master <- dat_country.master %>%
+   group_by(Country) %>%
+   mutate(people_vaccinated_per_hundred  = ifelse(Date == min(Date) & is.na(people_vaccinated_per_hundred),0,people_vaccinated_per_hundred)) %>%
+   mutate(people_vaccinated_per_hundred_imputed = zoo::na.locf(people_vaccinated_per_hundred))
+
+dat_country.master$RuleofLaw <- as.numeric(as.character(dat_country.master$RuleofLaw))
+dat_country.master$VoiceandAccountability <- as.numeric(as.character(dat_country.master$VoiceandAccountability))
+dat_country.master$GovernmentEffectiveness <- as.numeric(as.character(dat_country.master$GovernmentEffectiveness))
+dat_country.master$GINI <- as.numeric(as.character(dat_country.master$GINI))
+
+```
+
+
+### Cross-sectional regress up to Dec. 31, 2020
+```{r}
+### Calculate the mean and sd of SI in the first year
+dat_country.SI <- dat_country.master %>%
+   ungroup() %>%
+   dplyr::filter(Date <= "2020-12-28") %>%
+   dplyr::group_by(Country) %>%
+   dplyr::summarize(SI_mean = mean(StringencyIndex, na.rm = T),
+                    SI_sd = stdev(StringencyIndex, na.rm = T))
+
+### Last Value in the first year, i.e., up to Dec. 31, 2020
+dat_country.cross_sectional <- dat_country.master %>%
+   dplyr::filter(Date == "2020-12-28" & !is.na(total_deaths_per_million)) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > total_deaths_per_million) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > 0)
+
+regmod.cross_sectional.ratio.test <- lm(ratio_excess_official~
+                                           gdp_per_capita,
+                                        # + RuleofLaw
+                                        # + VoiceandAccountability
+                                        # + GovernmentEffectiveness,
+                                        data=dat_country.cross_sectional, 
+                                        na.action="na.exclude")
+se.cross_sectional.ratio.test <- coeftest(regmod.cross_sectional.ratio.test, vcov = vcovHC(regmod.cross_sectional.ratio.test, type = "HC1"))
+
+regmod.cross_sectional.ratio <- lm(ratio_excess_official~
+                                      gdp_per_capita
+                                   + population_density
+                                   + propurban
+                                   + aged_65_older
+                                   + RuleofLaw
+                                   + VoiceandAccountability
+                                   + GovernmentEffectiveness,
+                                   data=dat_country.cross_sectional, 
+                                   na.action="na.exclude")
+se.cross_sectional.ratio <- coeftest(regmod.cross_sectional.ratio, vcov = vcovHC(regmod.cross_sectional.ratio, type = "HC1"))
+
+
+
+
+```
+
+### 2021 Analysis
+```{r}
+### Calculate the mean and sd of SI up to Dec. 27 2021
+dat_country.SI <- dat_country.master %>%
+   dplyr::filter(Date <= "2021-12-27") %>%
+   dplyr::group_by(Country) %>%
+   dplyr::summarize(SI_mean = mean(StringencyIndex, na.rm = T),
+                    SI_sd = stdev(StringencyIndex, na.rm = T))
+
+dat_country.cross_sectional <- dat_country.master %>%
+   dplyr::filter(Date == "2021-12-27" & !is.na(total_deaths_per_million))
+
+dat_country.cross_sectional <- dat_country.cross_sectional %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > total_deaths_per_million) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > 0) 
+
+
+regmod.cross_sectional.ratio.second_year.test <- lm(ratio_excess_official~
+                                                       gdp_per_capita
+                                                    + total_vaccinations_per_hundred_imputed,
+                                                    data=dat_country.cross_sectional,
+                                                    na.action="na.exclude")
+
+regmod.cross_sectional.ratio.second_year <- lm(ratio_excess_official~
+                                                  gdp_per_capita
+                                               + population_density
+                                               + propurban
+                                               + aged_65_older
+                                               + RuleofLaw
+                                               + VoiceandAccountability
+                                               + GovernmentEffectiveness
+                                               + total_vaccinations_per_hundred_imputed,
+                                               data=dat_country.cross_sectional,
+                                               na.action="na.exclude")
+se.cross_sectional.ratio.second_year <- coeftest(regmod.cross_sectional.ratio.second_year, vcov = vcovHC(regmod.cross_sectional.ratio.second_year, type = "HC1"))
+
+
+
+
+cov.label <- c(
+   "GDP per Capita",
+   "Population Density",
+   "Urban Population Share",
+   "Aged 65+ Population Share",
+   "Rule of Law",
+   "Voice and Accountability",
+   "Government Effectiveness",
+   "Total Vaccinations per Hundred Population")
+
+
+stargazer(digits=4,regmod.cross_sectional.ratio.test,regmod.cross_sectional.ratio, regmod.cross_sectional.ratio.second_year.test,  regmod.cross_sectional.ratio.second_year, type="html",out=file.path("Outputs_Cross Sectional/",paste0(Sys.Date(), "_Table_baseline_cs_output_first_and_second_year_combined_test", ".htm", sep = "")),
+          column.labels=c("As of 12/28/2020", "As of 12/27/2021"),
+          column.separate = c(2,2),
+          align = TRUE,
+          dep.var.labels = "E/O",
+          dep.var.labels.include = TRUE,
+          covariate.labels=cov.label, 
+          df = FALSE,omit.stat="adj.rsq",notes = c("*,**,*** correspond to 10%, 5% and 1% significance, respectively."),notes.append=F,notes.align ="l",title=paste("Cross Sectional Regression"),table.layout = "-ldmc#-t=sa-n")
+
+```
+
+###{r}
+```{r}
+library(xtable)
+correlation_matrix <- as.data.frame(cor(as.matrix(dat_country.cross_sectional[, c("total_vaccinations_per_hundred_imputed",
+                                                                                  "population_density", 
+                                                                                  "propurban",
+                                                                                  "aged_65_older",
+                                                                                  "gdp_per_capita",
+                                                                                  "RuleofLaw",
+                                                                                  "VoiceandAccountability",
+                                                                                  "GovernmentEffectiveness")]), use = "complete.obs"))
+write_excel_csv(correlation_matrix, "./Outputs_Cross Sectional/Correlation_Matrix.csv")
+```
+
