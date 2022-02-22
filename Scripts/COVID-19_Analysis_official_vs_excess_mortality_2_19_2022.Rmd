@@ -1,0 +1,665 @@
+
+# Import library
+```{r}
+knitr::opts_chunk$set(eval = FALSE)
+rm(list = ls())
+library(lubridate)
+library(zoo)
+library(quantmod)
+library(fBasics)
+library(tseries)
+library(sandwich)
+library(lmtest)
+library(lattice)
+library(xtable)
+library(vars)
+library(dplyr)
+library(gridExtra)
+library(corrplot)
+library(ggplot2)
+library(reshape2)
+library(readxl)
+library(data.table)
+library(rvest)
+library(plm)
+library(stringr)
+library(ggpubr)
+library(tidyverse)
+library(foreign)
+library(stargazer)
+library(glmnet)
+library(caret)
+library(VIM) 
+library(tableHTML)
+```
+
+### Read Final_Data_Country
+```{r}
+dat_country.master.master <- read_excel("./Data/Final_Data_Country.xlsx", sheet = "Data")
+
+### Remove countries with population less than 1 million
+### dat_country.master.master <- dat_country.master.master[which(dat_country.master.master$population > 1000000),]
+
+dat_country.master.master$Date <- as.Date(dat_country.master.master$Date, origin = "1960-01-01")
+
+Countries <- unique(dat_country.master.master$Country)
+
+Countries
+
+```
+
+
+### Prepare dataset for panel estimation
+```{r}
+dat_country <- dat_country.master.master
+dat_country$Date <- as.Date(dat_country$Date,"%Y-%m-%d")
+dat_country$gdp_per_capita <- dat_country$gdp_per_capita/1000
+#reorder
+dat_country <- dat_country[order(dat_country$Date),]
+dat_country <- dat_country[order(dat_country$Country),]
+
+# dat_country <- dat_country[which(dat_country$Country != "Turkmenistan"),]
+
+
+dat_country.master <- dat_country %>%
+   group_by(Country) %>%
+   mutate(Official_New_Mortality = total_deaths_per_million - Lag(total_deaths_per_million,1),
+          total_recovery_per_million = total_cases_per_million - total_deaths_per_million,
+          Deviation_percent_excess_official = log(cumulative_excess_mortality_per_million) - log(total_deaths_per_million),
+          ratio_excess_official = cumulative_excess_mortality_per_million/total_deaths_per_million,
+          diff_excess_official = cumulative_excess_mortality_per_million - total_deaths_per_million) 
+
+```
+
+### Impute people vaccinated per hundred and standardize all variables 
+```{r}
+
+# Impute total_vaccinations_per_hundred using last observation carried forward
+dat_country.master <- dat_country.master[order(dat_country.master$Date),]
+dat_country.master <- dat_country.master[order(dat_country.master$Country),]
+dat_country.master <- dat_country.master %>%
+   dplyr::group_by(Country) %>%
+   mutate(total_vaccinations_per_hundred  = ifelse(Date == min(Date) & is.na(total_vaccinations_per_hundred),0,total_vaccinations_per_hundred)) %>%
+   mutate(total_vaccinations_per_hundred_imputed = zoo::na.locf(total_vaccinations_per_hundred))
+
+# Impute total_vaccinations_per_hundred using last observation carried forward
+dat_country.master <- dat_country.master[order(dat_country.master$Date),]
+dat_country.master <- dat_country.master[order(dat_country.master$Country),]
+dat_country.master <- dat_country.master %>%
+   group_by(Country) %>%
+   mutate(people_vaccinated_per_hundred  = ifelse(Date == min(Date) & is.na(people_vaccinated_per_hundred),0,people_vaccinated_per_hundred)) %>%
+   mutate(people_vaccinated_per_hundred_imputed = zoo::na.locf(people_vaccinated_per_hundred))
+
+dat_country.master$RuleofLaw <- as.numeric(as.character(dat_country.master$RuleofLaw))
+dat_country.master$VoiceandAccountability <- as.numeric(as.character(dat_country.master$VoiceandAccountability))
+dat_country.master$GovernmentEffectiveness <- as.numeric(as.character(dat_country.master$GovernmentEffectiveness))
+dat_country.master$GINI <- as.numeric(as.character(dat_country.master$GINI))
+
+```
+
+### Quantile samples and summary statistics - official mortality and first year
+```{r}
+
+dat_country.cumulative_mortality <- dat_country.master %>%
+   dplyr::filter(Date <= "2020-12-31" & !is.na(total_deaths_per_million)) %>%
+   dplyr::group_by(Country_Code, Country) %>%
+   dplyr::summarise(cumulative_mortality_per_million = last(total_deaths_per_million)) %>%
+   arrange(cumulative_mortality_per_million) 
+
+dat_country.cumulative_mortality <- dat_country.cumulative_mortality %>%
+   ungroup() %>%
+   mutate(Mortality_Ranking = row_number())
+
+library(qpcR)
+number_sub_sample <- 4
+for (i_quartile in seq(1,number_sub_sample,1)){
+   dat.size <- nrow(dat_country.cumulative_mortality)
+   if (i_quartile == 1){
+      dat_country.quartile <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+   } else if (i_quartile != number_sub_sample){
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+      
+   } else {
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (number_sub_sample-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+   }
+}
+dat_country.quartile <- as.data.frame(dat_country.quartile)
+
+colnames(dat_country.quartile) <- seq(1:number_sub_sample)
+write_tableHTML(tableHTML(dat_country.quartile,rownames=FALSE, widths = rep(200, number_sub_sample),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample_first_year_official.htm", sep =""))
+
+### Quartile Sample Summary Statistics
+
+dat_country.summary <- dat_country.master %>%
+   ungroup %>%
+   dplyr::filter(Date <= "2020-12-31")
+
+dat_country.summary$Mortality_Quartile <- 0
+for (i_quartile in c(1:number_sub_sample)){
+   if (i_quartile != number_sub_sample){
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   } else{
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   }
+}
+
+dat_country.summary <- dat_country.summary %>%
+   group_by(Country, Country_Code) %>%
+   summarise_all(last)
+
+dat_country.quartile.official <- dat_country.summary[,c("Country", "Country_Code", "Mortality_Quartile",
+                                                        "population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", 
+                                                        "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")]
+
+### Mean
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) mean(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_Mean_first_year_official.htm", sep = ""))
+### SD
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older","gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) sd(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_SD_first_year_official.htm", sep = ""))
+```
+
+### Quantile samples and summary statistics - excess mortality and first year
+```{r}
+
+dat_country.cumulative_mortality <- dat_country.master %>%
+   dplyr::filter(Date <= "2020-12-31" & !is.na(cumulative_excess_mortality_per_million)) %>%
+   dplyr::group_by(Country_Code, Country) %>%
+   dplyr::summarise(cumulative_mortality_per_million = last(cumulative_excess_mortality_per_million)) %>%
+   arrange(cumulative_mortality_per_million) 
+
+dat_country.cumulative_mortality <- dat_country.cumulative_mortality %>%
+   ungroup() %>%
+   mutate(Mortality_Ranking = row_number())
+
+library(qpcR)
+number_sub_sample <- 4
+for (i_quartile in seq(1,number_sub_sample,1)){
+   dat.size <- nrow(dat_country.cumulative_mortality)
+   if (i_quartile == 1){
+      dat_country.quartile <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+   } else if (i_quartile != number_sub_sample){
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+      
+   } else {
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (number_sub_sample-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+   }
+}
+dat_country.quartile <- as.data.frame(dat_country.quartile)
+
+colnames(dat_country.quartile) <- seq(1:number_sub_sample)
+write_tableHTML(tableHTML(dat_country.quartile,rownames=FALSE, widths = rep(200, number_sub_sample),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample_first_year_excess.htm", sep =""))
+
+### Quartile Sample Summary Statistics
+
+dat_country.summary <- dat_country.master %>%
+   ungroup %>%
+   dplyr::filter(Date <= "2020-12-31")
+
+dat_country.summary$Mortality_Quartile <- 0
+for (i_quartile in c(1:number_sub_sample)){
+   if (i_quartile != number_sub_sample){
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   } else{
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   }
+}
+
+dat_country.summary <- dat_country.summary %>%
+   group_by(Country, Country_Code) %>%
+   summarise_all(last)
+
+dat_country.quartile.excess <- dat_country.summary[,c("Country", "Country_Code", "Mortality_Quartile")]
+
+dat_country.quartile.first_year <- merge(dat_country.quartile.official, dat_country.quartile.excess, by = c("Country", "Country_Code"))
+
+### Mean
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) mean(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_Mean_first_year_excess.htm", sep = ""))
+### SD
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older","gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) sd(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_SD_first_year_excess.htm", sep = ""))
+```
+
+### Quantile samples and summary statistics - official mortality and second year
+```{r}
+
+dat_country.cumulative_mortality <- dat_country.master %>%
+   dplyr::filter(Date <= "2021-12-31" & !is.na(total_deaths_per_million)) %>%
+   dplyr::group_by(Country_Code, Country) %>%
+   dplyr::summarise(cumulative_mortality_per_million = last(total_deaths_per_million)) %>%
+   arrange(cumulative_mortality_per_million) 
+
+dat_country.cumulative_mortality <- dat_country.cumulative_mortality %>%
+   ungroup() %>%
+   mutate(Mortality_Ranking = row_number())
+
+library(qpcR)
+number_sub_sample <- 4
+for (i_quartile in seq(1,number_sub_sample,1)){
+   dat.size <- nrow(dat_country.cumulative_mortality)
+   if (i_quartile == 1){
+      dat_country.quartile <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+   } else if (i_quartile != number_sub_sample){
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+      
+   } else {
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (number_sub_sample-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+   }
+}
+dat_country.quartile <- as.data.frame(dat_country.quartile)
+
+colnames(dat_country.quartile) <- seq(1:number_sub_sample)
+write_tableHTML(tableHTML(dat_country.quartile,rownames=FALSE, widths = rep(200, number_sub_sample),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample_second_year_official.htm", sep =""))
+
+### Quartile Sample Summary Statistics
+
+dat_country.summary <- dat_country.master %>%
+   ungroup %>%
+   dplyr::filter(Date <= "2021-12-31")
+
+dat_country.summary$Mortality_Quartile <- 0
+for (i_quartile in c(1:number_sub_sample)){
+   if (i_quartile != number_sub_sample){
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   } else{
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   }
+}
+
+dat_country.summary <- dat_country.summary %>%
+   group_by(Country, Country_Code) %>%
+   summarise_all(last)
+
+dat_country.quartile.official <- dat_country.summary[,c("Country", "Country_Code", "Mortality_Quartile",
+                                                        "population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", 
+                                                        "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")]
+
+### Mean
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) mean(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_Mean_second_year_official.htm", sep = ""))
+### SD
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older","gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) sd(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_SD_second_year_official.htm", sep = ""))
+```
+
+### Quantile samples and summary statistics - excess mortality and second year
+```{r}
+
+dat_country.cumulative_mortality <- dat_country.master %>%
+   dplyr::filter(Date <= "2021-12-31" & !is.na(cumulative_excess_mortality_per_million)) %>%
+   dplyr::group_by(Country_Code, Country) %>%
+   dplyr::summarise(cumulative_mortality_per_million = last(cumulative_excess_mortality_per_million)) %>%
+   arrange(cumulative_mortality_per_million) 
+
+dat_country.cumulative_mortality <- dat_country.cumulative_mortality %>%
+   ungroup() %>%
+   mutate(Mortality_Ranking = row_number())
+
+library(qpcR)
+number_sub_sample <- 4
+for (i_quartile in seq(1,number_sub_sample,1)){
+   dat.size <- nrow(dat_country.cumulative_mortality)
+   if (i_quartile == 1){
+      dat_country.quartile <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+   } else if (i_quartile != number_sub_sample){
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+      
+   } else {
+      dat_country.quartile.temp <- as.vector(dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (number_sub_sample-1)/number_sub_sample*dat.size)])
+      dat_country.quartile <- qpcR:::cbind.na(dat_country.quartile, dat_country.quartile.temp)
+   }
+}
+dat_country.quartile <- as.data.frame(dat_country.quartile)
+
+colnames(dat_country.quartile) <- seq(1:number_sub_sample)
+write_tableHTML(tableHTML(dat_country.quartile,rownames=FALSE, widths = rep(200, number_sub_sample),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample_second_year_excess.htm", sep =""))
+
+### Quartile Sample Summary Statistics
+
+dat_country.summary <- dat_country.master %>%
+   ungroup %>%
+   dplyr::filter(Date <= "2021-12-31")
+
+dat_country.summary$Mortality_Quartile <- 0
+for (i_quartile in c(1:number_sub_sample)){
+   if (i_quartile != number_sub_sample){
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking < i_quartile/number_sub_sample*dat.size & dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   } else{
+      dat_country.summary$Mortality_Quartile[which(dat_country.summary$Country %in% dat_country.cumulative_mortality$Country[which(dat_country.cumulative_mortality$Mortality_Ranking >= (i_quartile-1)/number_sub_sample*dat.size)])] <- i_quartile
+   }
+}
+
+dat_country.summary <- dat_country.summary %>%
+   group_by(Country, Country_Code) %>%
+   summarise_all(last)
+
+dat_country.quartile.excess <- dat_country.summary[,c("Country", "Country_Code", "Mortality_Quartile")]
+
+dat_country.quartile.second_year <- merge(dat_country.quartile.official, dat_country.quartile.excess, by = c("Country", "Country_Code"))
+
+### Mean
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older", "gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) mean(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinatiions")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_Mean_second_year_excess.htm", sep = ""))
+### SD
+dat_country.quartile.summary <- dat_country.summary[, c("Mortality_Quartile","population", "population_density", "propurban",  
+                                                        "aged_65_older","gdp_per_capita", "RuleofLaw", "VoiceandAccountability", 
+                                                        "GovernmentEffectiveness",
+                                                        "total_vaccinations_per_hundred_imputed")] %>%
+   dplyr::filter(Mortality_Quartile > 0) %>%
+   group_by(Mortality_Quartile) %>%
+   summarise_all(function (x) sd(x, na.rm = T))
+dat_country.quartile.summary$Mortality_Quartile <- NULL
+dat_country.quartile.summary <- round(dat_country.quartile.summary, 1)
+library(data.table)
+dat_country.quartile.summary <- data.table::transpose(dat_country.quartile.summary)
+colnames(dat_country.quartile.summary) <- seq(1:number_sub_sample)
+rownames(dat_country.quartile.summary) <- c("Population",
+                                            "Population Density",
+                                            "Urban Population Share",
+                                            "Aged 65+ Population Share",
+                                            "GDP per Capita",
+                                            "Rule of Law",
+                                            "Voice and Accountability",
+                                            "Government Effectiveness",
+                                            "Vaccinations")
+write_tableHTML(tableHTML(dat_country.quartile.summary, widths = c(250, rep(150, number_sub_sample)),border = 0), file = paste0("Outputs_Cross Sectional/", Sys.Date(), "_Quartile Sample Summary Statistics_SD_second_year_excess.htm", sep = ""))
+```
+
+### Save Official vs Excess Quartile
+```{r}
+dat_country.quartile.first_year <- dat_country.quartile.first_year[,c(1:3, 13, 4:12)]
+colnames(dat_country.quartile.first_year)[1:4] <- c("Country", "Country_Code", "Mortality_Quartile_Official", "Mortality_Quartile_Excess")
+
+dat_country.quartile.second_year <- dat_country.quartile.second_year[,c(1:3, 13, 4:12)]
+colnames(dat_country.quartile.second_year)[1:4] <- c("Country", "Country_Code", "Mortality_Quartile_Official", "Mortality_Quartile_Excess")
+library(openxlsx)
+wb_quartile_sample <- createWorkbook()
+addWorksheet(wb_quartile_sample, "First_Year")
+writeData(wb_quartile_sample, "First_Year", dat_country.quartile.first_year)
+addWorksheet(wb_quartile_sample, "Second_Year")
+writeData(wb_quartile_sample, "Second_Year", dat_country.quartile.second_year)
+saveWorkbook(wb_quartile_sample, "./Outputs_Cross Sectional/Results_Quartile_Official_Excess_updated.xlsx", overwrite = TRUE)
+```
+
+### Summary Statistics of Better and Worse Sample
+```{r}
+dat_doing_better <- dat_country.quartile.second_year[which(dat_country.quartile.second_year$Mortality_Quartile_Excess - dat_country.quartile.second_year$Mortality_Quartile_Official <= -2),]
+stargazer(dat_doing_better[,c(5:ncol(dat_doing_better))], type="html",out=file.path("Outputs_Cross Sectional/",paste0(Sys.Date(), "_Table_summary_statistics_doing_better", ".htm", sep = "")))
+
+dat_doing_worse <- dat_country.quartile.second_year[which(dat_country.quartile.second_year$Mortality_Quartile_Excess - dat_country.quartile.second_year$Mortality_Quartile_Official >= 2),]
+stargazer(dat_doing_worse[,c(5:ncol(dat_doing_worse))], type="html",out=file.path("Outputs_Cross Sectional/",paste0(Sys.Date(), "_Table_summary_statistics_doing_worse", ".htm", sep = "")))
+
+```
+
+### Cross-sectional regress up to Dec. 31, 2020
+```{r}
+### Calculate the mean and sd of SI in the first year
+dat_country.SI <- dat_country.master %>%
+   ungroup() %>%
+   dplyr::filter(Date <= "2020-12-28") %>%
+   dplyr::group_by(Country) %>%
+   dplyr::summarize(SI_mean = mean(StringencyIndex, na.rm = T),
+                    SI_sd = stdev(StringencyIndex, na.rm = T))
+
+### Last Value in the first year, i.e., up to Dec. 31, 2020
+dat_country.cross_sectional <- dat_country.master %>%
+   dplyr::filter(Date == "2020-12-28" & !is.na(total_deaths_per_million)) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > total_deaths_per_million) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > 0)
+
+regmod.cross_sectional.ratio.test <- lm(ratio_excess_official~
+                                           gdp_per_capita,
+                                        # + RuleofLaw
+                                        # + VoiceandAccountability
+                                        # + GovernmentEffectiveness,
+                                        data=dat_country.cross_sectional, 
+                                        na.action="na.exclude")
+se.cross_sectional.ratio.test <- coeftest(regmod.cross_sectional.ratio.test, vcov = vcovHC(regmod.cross_sectional.ratio.test, type = "HC1"))
+
+regmod.cross_sectional.ratio <- lm(ratio_excess_official~
+                                      gdp_per_capita
+                                   + population_density
+                                   + propurban
+                                   + aged_65_older
+                                   + RuleofLaw
+                                   + VoiceandAccountability
+                                   + GovernmentEffectiveness,
+                                   data=dat_country.cross_sectional, 
+                                   na.action="na.exclude")
+se.cross_sectional.ratio <- coeftest(regmod.cross_sectional.ratio, vcov = vcovHC(regmod.cross_sectional.ratio, type = "HC1"))
+
+
+
+
+```
+
+
+### 2021 Analysis
+```{r}
+### Calculate the mean and sd of SI up to Dec. 27 2021
+dat_country.SI <- dat_country.master %>%
+   dplyr::filter(Date <= "2021-12-27") %>%
+   dplyr::group_by(Country) %>%
+   dplyr::summarize(SI_mean = mean(StringencyIndex, na.rm = T),
+                    SI_sd = stdev(StringencyIndex, na.rm = T))
+
+dat_country.cross_sectional <- dat_country.master %>%
+   dplyr::filter(Date == "2021-12-27" & !is.na(total_deaths_per_million))
+
+dat_country.cross_sectional <- dat_country.cross_sectional %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > total_deaths_per_million) %>%
+   dplyr::filter(cumulative_excess_mortality_per_million > 0) 
+
+
+regmod.cross_sectional.ratio.second_year.test <- lm(ratio_excess_official~
+                                                       gdp_per_capita
+                                                    + total_vaccinations_per_hundred_imputed,
+                                                    data=dat_country.cross_sectional,
+                                                    na.action="na.exclude")
+
+regmod.cross_sectional.ratio.second_year <- lm(ratio_excess_official~
+                                                  gdp_per_capita
+                                               + population_density
+                                               + propurban
+                                               + aged_65_older
+                                               + RuleofLaw
+                                               + VoiceandAccountability
+                                               + GovernmentEffectiveness
+                                               + total_vaccinations_per_hundred_imputed,
+                                               data=dat_country.cross_sectional,
+                                               na.action="na.exclude")
+se.cross_sectional.ratio.second_year <- coeftest(regmod.cross_sectional.ratio.second_year, vcov = vcovHC(regmod.cross_sectional.ratio.second_year, type = "HC1"))
+
+
+
+
+cov.label <- c(
+   "GDP per Capita",
+   "Population Density",
+   "Urban Population Share",
+   "Aged 65+ Population Share",
+   "Rule of Law",
+   "Voice and Accountability",
+   "Government Effectiveness",
+   "Total Vaccinations per Hundred Population")
+
+
+stargazer(digits=4,regmod.cross_sectional.ratio.test,regmod.cross_sectional.ratio, regmod.cross_sectional.ratio.second_year.test,  regmod.cross_sectional.ratio.second_year, type="html",out=file.path("Outputs_Cross Sectional/",paste0(Sys.Date(), "_Table_baseline_cs_output_first_and_second_year_combined_test", ".htm", sep = "")),
+          column.labels=c("As of 12/28/2020", "As of 12/27/2021"),
+          column.separate = c(2,2),
+          align = TRUE,
+          dep.var.labels = "E/O",
+          dep.var.labels.include = TRUE,
+          covariate.labels=cov.label, 
+          df = FALSE,omit.stat="adj.rsq",notes = c("*,**,*** correspond to 10%, 5% and 1% significance, respectively."),notes.append=F,notes.align ="l",title=paste("Cross Sectional Regression"),table.layout = "-ldmc#-t=sa-n")
+
+```
+
+###{r}
+```{r}
+library(xtable)
+correlation_matrix <- as.data.frame(cor(as.matrix(dat_country.cross_sectional[, c("total_vaccinations_per_hundred_imputed",
+                                                                                  "population_density", 
+                                                                                  "propurban",
+                                                                                  "aged_65_older",
+                                                                                  "gdp_per_capita",
+                                                                                  "RuleofLaw",
+                                                                                  "VoiceandAccountability",
+                                                                                  "GovernmentEffectiveness")]), use = "complete.obs"))
+write_excel_csv(correlation_matrix, "./Outputs_Cross Sectional/Correlation_Matrix.csv")
+```
+
