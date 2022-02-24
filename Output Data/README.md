@@ -1,1 +1,1 @@
-To view and download the final, cleaned dataset, please visit this [Google Drive link](https://docs.google.com/spreadsheets/d/1u0V9PWR2U1WSb68sGfzRtrA5vjDd7TqX/edit?usp=sharing&ouid=117879657768539838552&rtpof=true&sd=true).
+To identify core variables in the final data (Final_Data_Country.xlsx), please examine the VariableDescription.xlsx file. The other output file, Results_Quartile_Excess_Official.xlsx was constructed from the final data, and used to generate Tables 1, 2 and 4. The script for replication of these analyses can be found in the script folder.
