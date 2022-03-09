@@ -1,0 +1,261 @@
+---
+title: "COVID Quartile Dynamics"
+author: "Authored by: Sameer Nair-Desai"
+date: "Updated as of `r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  word_document: default
+---
+
+
+```{r setup, include = FALSE, error = FALSE}
+# Setting the working directory and settings. Change if not Sameer.
+knitr::opts_chunk$set(echo = F, warning = F, message = F, dpi = 300)
+knitr::opts_knit$set(root.dir = "/Users/sameer_nair-desai/Desktop/KEY/Work/Aizenman/COVIDMortalities/")
+```
+
+```{r libraries, include = FALSE, error = FALSE}
+# Loading packages.
+cat("Loading packages... ")
+
+#----------------IMPORTING------------------#
+
+suppressPackageStartupMessages(library(openxlsx))
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(readxl))
+
+#----------------CLEANING-------------------#
+
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(stringr))
+suppressPackageStartupMessages(library(reshape2))
+suppressPackageStartupMessages(library(forecast))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(collapse))
+
+#----------------VISUALIZATIONS-------------#
+
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(vtable))
+suppressPackageStartupMessages(library(webshot))
+suppressPackageStartupMessages(library(scales))
+suppressPackageStartupMessages(library(officer))
+suppressPackageStartupMessages(library(flextable))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(viridis))
+suppressPackageStartupMessages(library(Hmisc))
+suppressPackageStartupMessages(library(summarytools))
+suppressPackageStartupMessages(library(patchwork))
+suppressPackageStartupMessages(library(ggrepel))
+
+# Removing scientific notation.
+options(scipen = 999)
+
+``` 
+
+```{r imports, include = FALSE, error = FALSE}
+
+# Importing the Excel sheet of country quartiles by official & excess mortality.
+
+cat("\nImporting mortality quartiles... ")
+base_mortalities <- read.xlsx("Input/Results_Quartile_Official_Excess.xlsx", sheet = "Quartile")
+
+# The purpose of this script is to accomplish the following four core tasks:
+
+# 1. Construct a "doing better in excess" sample of all countries that have an 
+# excess death quartile which is two or more quartiles BELOW their 
+# official death quartile (i.e., France).
+
+# 2. Construct a "doing worse in excess" sample of all countries that have an 
+# excess death quartile which is two or more quartiles ABOVE their 
+# official death quartile (i.e., Bangladesh).
+
+# 3. Within these sample subsets, compute and compare mean core demographics.
+
+# 4. Generate a dot plot mapping excess death quartiles against official
+# death quartiles by country, where countries are colored by their quartile pairs.
+
+# First, we want to handle our mortality quartile dynamics.
+
+# Here, we generate a new column for any countries whose difference in quartiles
+# is two or above. This will give us our complete sample for both doing better
+# and worse in excess.
+
+base_mortalities$quartile_diff = abs(base_mortalities$Official.Quartile - base_mortalities$Excess.Quartile)
+
+print(paste0("There are ", as.character(sum(base_mortalities$quartile_diff > 1)), " total countries which meet our criteria."))
+
+# Now, we create a filtered dataset with only these counries.
+filt_mortalities <- base_mortalities %>%
+  dplyr::filter(base_mortalities$quartile_diff > 1)
+
+# Here, we create a string binary to indicate whether these countries are doing
+# better or worse in excess.
+
+filt_mortalities$performance_status <- ifelse(filt_mortalities$Excess.Quartile < filt_mortalities$Official.Quartile, "Doing Better in Excess", "Doing Worse in Excess")
+
+# Sorting the data by performance status and country name.
+filt_mortalities <- filt_mortalities %>%
+  dplyr::arrange(performance_status, Country)
+
+# Now, we want to compare our mean demographics across our "performance status"
+# indicator. We can do this easily with the sumtable package.
+
+mean_comparisons <- vtable::sumtable(filt_mortalities, vars = c('population_density', 
+'propurban', 'aged_65_older', 'gdp_per_capita', 'RuleofLaw', 'VoiceandAccountability', 
+'GovernmentEffectiveness', 'SI_mean', 'SI_sd', 'total_vaccinations_per_hundred_imputed'), 
+group = 'performance_status', group.test = TRUE, summ = c('notNA(x)', 'mean(x)', 
+'sd(x)', 'min(x)', 'pctile(x)[25]', 'pctile(x)[75]', 'max(x)'), group.long = TRUE)
+
+# Finally, writing our sample subset file to the output folder.
+# Rewriting our file.
+write.csv(filt_mortalities, "Output/filt_mortalities.csv")
+
+# Next, we construct our dot plot across the entire sample.
+
+# First, converting our quartiles to factor variables.
+base_mortalities$Official.Quartile <- as.factor(base_mortalities$Official.Quartile)
+base_mortalities$Excess.Quartile <- as.factor(base_mortalities$Excess.Quartile)
+
+plain <- ggplot(base_mortalities, aes(x = Official.Quartile, y = Excess.Quartile)) + 
+  geom_dotplot(binaxis = 'y', stackdir = 'center') + geom_text(aes(label = Country), color = "cornflowerblue", fontface = "bold", size = 0.4, position = position_dodge(5), hjust = -0.25)
+plain
+
+# Importing population sizes (from the United Nations, population values as of 2020: https://population.un.org/wup/DataQuery/)
+world_pop <- read.csv("Input/world_population.csv")
+
+# Importing Covid Deaths.
+covid_data <- read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports/12-31-2021.csv")
+covid_data$Country <- covid_data$Country_Region
+covid_data <- data.frame(covid_data$Confirmed, covid_data$Deaths, covid_data$Country)
+colnames(covid_data) <- c("Cases", "Deaths", "Country")
+covid_data <- collap(covid_data, Cases + Deaths ~ Country, FUN = fsum)
+
+# Creating Data IDs for manual merge checks.
+world_pop$data_ID = "World Pop. File Data ID"
+covid_data$data_ID = "Covid File Data ID"
+base_mortalities$data_ID = "Mortalities File Data ID"
+
+# Making manual name revisions.
+world_pop$Country[world_pop$Country == "Bolivia (Plurinational State of)"] <- "Bolivia"
+world_pop$Country[world_pop$Country == "Brunei Darussalam"] <- "Brunei"
+world_pop$Country[world_pop$Country == "Myanmar"] <- "Burma"
+world_pop$Country[world_pop$Country == "Democratic Republic of the Congo"] <- "Congo (Kinshasa)"
+world_pop$Country[world_pop$Country == "Congo"] <- "Congo (Brazzaville)"
+world_pop$Country[world_pop$Country == "Côte d'Ivoire"] <- "Cote d'Ivoire"
+world_pop$Country[world_pop$Country == "Swaziland"] <- "Eswatini"
+world_pop$Country[world_pop$Country == "Iran (Islamic Republic of)"] <- "Iran"
+world_pop$Country[world_pop$Country == "Republic of Korea"] <- "Korea, South"
+world_pop$Country[world_pop$Country == "Lao People's Democratic Republic"] <- "Laos"
+world_pop$Country[world_pop$Country == "Republic of Moldova"] <- "Moldova"
+world_pop$Country[world_pop$Country == "TFYR Macedonia"] <- "North Macedonia"
+world_pop$Country[world_pop$Country == "Micronesia (Fed. States of)"] <- "Micronesia"
+world_pop$Country[world_pop$Country == "Russian Federation"] <- "Russia"
+world_pop$Country[world_pop$Country == "Syrian Arab Republic"] <- "Syria"
+world_pop$Country[world_pop$Country == "Venezuela (Bolivarian Republic of)"] <- "Venezuela"
+world_pop$Country[world_pop$Country == "Viet Nam"] <- "Vietnam"
+world_pop$Country[world_pop$Country == "United Republic of Tanzania"] <- "Tanzania"
+world_pop$Country[world_pop$Country == "United States of America"] <- "US"
+world_pop$Country[world_pop$Country == "China, Taiwan Province of China"] <- "Taiwan*"
+
+# Merging our population data and Covid data.
+merged_a <- merge(world_pop, covid_data, by = "Country", all = TRUE)
+merged_a$data_ID.x[merged_a$Country == "China, Hong Kong SAR"] <- "World Pop. File Data ID"
+merged_a$data_ID.y[merged_a$Country == "China, Hong Kong SAR"] <- "Covid File Data ID"
+
+# Dropping irrelevant countries.
+merged_a <- merged_a %>%
+  dplyr::filter(!is.na(data_ID.x)) %>%
+  dplyr::filter(!is.na(data_ID.y)) %>%
+  dplyr::arrange(Country)
+
+# Making additional name corrections.
+base_mortalities$Country[base_mortalities$Country == "Congo, Democratic Republic of the"] <- "Congo (Kinshasa)"
+base_mortalities$Country[base_mortalities$Country == "Congo, Republic of"] <- "Congo (Brazzaville)"
+base_mortalities$Country[base_mortalities$Country == "Côte d'Ivoire"] <- "Cote d'Ivoire"
+base_mortalities$Country[base_mortalities$Country == "Czech Republic"] <- "Czechia"
+base_mortalities$Country[base_mortalities$Country == "Gambia, The"] <- "Gambia"
+base_mortalities$Country[base_mortalities$Country == "Hong Kong SAR"] <- "China, Hong Kong SAR"
+base_mortalities$Country[base_mortalities$Country == "Korea"] <- "Korea, South"
+base_mortalities$Country[base_mortalities$Country == "Kyrgyz Republic"] <- "Kyrgyzstan"
+base_mortalities$Country[base_mortalities$Country == "Lao P.D.R."] <- "Laos"
+base_mortalities$Country[base_mortalities$Country == "Macedonia, FYR"] <- "North Macedonia"
+base_mortalities$Country[base_mortalities$Country == "Myanmar"] <- "Burma"
+base_mortalities$Country[base_mortalities$Country == "Slovak Republic"] <- "Slovakia"
+base_mortalities$Country[base_mortalities$Country == "Swaziland"] <- "Eswatini"
+base_mortalities$Country[base_mortalities$Country == "Taiwan Province of China"] <- "Taiwan*"
+base_mortalities$Country[base_mortalities$Country == "United States"] <- "US"
+  
+merged_a <- merged_a %>%
+  dplyr::rename(WB_Population = Population, JHU_Deaths = Deaths)
+
+# Merging our population and Covid data to our mortality data.
+merged_mortalities <- merge(merged_a, base_mortalities, by = "Country", all = TRUE)
+
+# Keeping only countries in our original sample.
+merged_mortalities <- merged_mortalities %>%
+  dplyr::filter(!is.na(Official.Quartile))
+
+# Removing irrelevant columns.
+merged_mortalities <- merged_mortalities[, -which(names(merged_mortalities) %in% c("data_ID.x", "data_ID.y", "data_ID"))]
+
+# Calculating deaths per million residents.
+merged_mortalities$deaths_per_million <- (merged_mortalities$JHU_Deaths/merged_mortalities$WB_Population)*1000000
+
+# Next, I construct a scatterplot of countries by their quartile pairing.
+
+color_map <- dplyr::case_when(
+merged_mortalities$Official.Quartile == 1 & merged_mortalities$Excess.Quartile == 1 ~ "#309143",
+
+merged_mortalities$Official.Quartile == 1 & merged_mortalities$Excess.Quartile == 2 ~ "#51b364",
+merged_mortalities$Official.Quartile == 2 & merged_mortalities$Excess.Quartile == 1 ~ "#51b364", 
+
+merged_mortalities$Official.Quartile == 1 & merged_mortalities$Excess.Quartile == 3 ~ "#8ace7e",
+merged_mortalities$Official.Quartile == 3 & merged_mortalities$Excess.Quartile == 1 ~ "#8ace7e",
+
+merged_mortalities$Official.Quartile == 2 & merged_mortalities$Excess.Quartile == 2 ~ "#ffda66",
+
+merged_mortalities$Official.Quartile == 2 & merged_mortalities$Excess.Quartile == 3 ~ "#f0bd27",
+merged_mortalities$Official.Quartile == 3 & merged_mortalities$Excess.Quartile == 2 ~ "#f0bd27",
+
+merged_mortalities$Official.Quartile == 3 & merged_mortalities$Excess.Quartile == 3 ~ "#e39802",
+
+merged_mortalities$Official.Quartile == 4 & merged_mortalities$Excess.Quartile == 1 ~ "#ff684c",
+merged_mortalities$Official.Quartile == 1 & merged_mortalities$Excess.Quartile == 4 ~ "#ff684c",
+
+merged_mortalities$Official.Quartile == 4 & merged_mortalities$Excess.Quartile == 2 ~ "#e03531",
+merged_mortalities$Official.Quartile == 2 & merged_mortalities$Excess.Quartile == 4 ~ "#e03531",
+
+merged_mortalities$Official.Quartile == 3 & merged_mortalities$Excess.Quartile == 4 ~ "#b60a1c",
+merged_mortalities$Official.Quartile == 4 & merged_mortalities$Excess.Quartile == 3 ~ "#b60a1c",
+
+merged_mortalities$Official.Quartile == 4 & merged_mortalities$Excess.Quartile == 4 ~ "black",
+)
+
+# Now, plotting deaths against vaccinations by country, colored by quartile pair.
+deaths_by_vaxx_quart <- ggplot(merged_mortalities, aes(x = total_vaccinations_per_hundred_imputed, y = deaths_per_million)) +
+geom_point(data = merged_mortalities, aes(x = total_vaccinations_per_hundred_imputed, y = deaths_per_million), color = color_map) + labs(title = "Country Official Deaths per Million by Vaccination Rates", x = "Total Vaccinations per Hundred Residents (Imputed)", y = "Total Covid-19 Deaths per Million Residents (12/31/2021)", caption = "Dots Colored by Mortality Quartile Pairs; Loess Curve of Best Fit in Grey.") + theme_bw() + geom_smooth(method = 'loess', color = "grey", linetype = "dashed", alpha = 0.2)
+
+alt_color_map <- dplyr::case_when(
+merged_mortalities$quartile_diff == 0 ~ "forestgreen",
+
+merged_mortalities$quartile_diff == 1 ~ "orangered1",
+
+merged_mortalities$quartile_diff == 2 ~ "darkred",
+
+merged_mortalities$quartile_diff == 3 ~ "black")
+
+# Doing the same thing, but now colored by quartile dynamics.
+deaths_by_vaxx_quart_dyn <- ggplot(merged_mortalities, aes(x = total_vaccinations_per_hundred_imputed, y = deaths_per_million)) + geom_point(data = merged_mortalities, aes(x = total_vaccinations_per_hundred_imputed, y = deaths_per_million), color = alt_color_map) + labs(title = "Country Official Deaths per Million by Vaccination Rates", x = "Total Vaccinations per Hundred Residents (Imputed)", y = "Total Covid-19 Deaths per Million Residents (12/31/2021)", caption = "Dots Colored by Shifts in Mortality Quartile Pairs; Loess Curve of Best Fit in Grey.") + theme_bw() + geom_smooth(method = 'loess', color = "grey", linetype = "dashed", alpha = 0.2)
+
+# Calculating summary statistics of new variable for user.
+mean(merged_mortalities$WB_Population, na.rm = TRUE)
+sd(merged_mortalities$WB_Population, na.rm = TRUE)
+min(merged_mortalities$WB_Population, na.rm = TRUE)
+max(merged_mortalities$WB_Population, na.rm = TRUE)
+mean(merged_mortalities$JHU_Deaths, na.rm = TRUE)
+sd(merged_mortalities$JHU_Deaths, na.rm = TRUE)
+min(merged_mortalities$JHU_Deaths, na.rm = TRUE)
+max(merged_mortalities$JHU_Deaths, na.rm = TRUE)
+
+```
